@@ -1,0 +1,77 @@
+---
+title: RBW Alpha Diversity
+Date: 31.5.21
+Correspondance: nathanwilliams22@gmail.com
+---
+```{r packages}
+library("phyloseq")
+library("vegan")
+library("ggplot2")
+library("dplyr")
+library("ape")
+library("tidyverse")
+library("tidyr")
+source('~/Dropbox/UTS/PhD/Projects/Chapter2_RoseBay/Data_Analysis/16S/Scripts/pairwise.adonis.r')
+```
+
+```{r Theme}
+library("ggplot2")
+#Theme for plot
+NathanTheme <- list(   #scale_x_discrete(limits=(locations)),
+                       theme(axis.title.x = element_text(vjust = 0, hjust = 0.5, size = 16)),
+                       theme(axis.title.y = element_text(vjust = 1, hjust = 0.5, size = 16)),
+                       theme(axis.text=element_text(size=10)),
+                       theme(axis.text.x = element_text(hjust=1, size = 14, angle = 0)),
+                       theme(axis.text.y = element_text(hjust=1, size = 14, angle = 0)),
+                       theme(panel.border = element_blank(), panel.grid.major = element_blank(), 
+                             panel.background = element_blank(),panel.grid.minor = element_blank(), 
+                             axis.line = element_line(colour = 'black')))
+```
+
+```{r Load data}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+sample_data <- read_csv('SMD.csv')
+asv_rarefy30K_long <- read_csv("asv_rarefy30K_long.csv")
+```
+
+```{r Phylo object}
+#Make data frames appropriate for Phyloseq
+abund.vars <- c('FGID', 'SampleID', "Abundance_Vegan_Rarefied")
+Abundance <-asv_rarefy30K_long %>% select(abund.vars) %>% distinct()
+Abundance.spread <- Abundance %>% spread(key='SampleID', value='Abundance_Vegan_Rarefied', fill=0)
+
+taxonomy.vars <- c('ASV_name', 'Kingdom', 'Phylum', 'Class','Order','Family', 'Genus', 'Species','FGID', 'ASV')
+taxonomy <- asv_rarefy30K_long %>% select(taxonomy.vars) %>% distinct()
+
+#Make the phyloseq obj
+OTU = otu_table(Abundance.spread[2:ncol(Abundance.spread)], taxa_are_rows = TRUE)
+TAX = tax_table(taxonomy)
+
+
+#Sample_Data
+sample.vars <- c("SampleID","Date","Site_F","Weather","Site","Type","Location")
+vars <- sample_data[sample.vars]
+vars <- distinct(vars)
+rownames(vars) <- vars$SampleID
+sampledata = sample_data(data.frame(vars))
+sampledata
+sam_data <- sampledata
+
+physeq = phyloseq(OTU, TAX, sam_data)
+```
+
+```{R Alpha Diversity - all}
+Plot <- plot_richness(physeq, x="Type", color = "Weather", measures=c("Shannon")) + geom_point(size=5, alpha=0.7) + NathanTheme
+Plot
+```
+
+```{r Adonis}
+Test1.pwAdonis <- pairwise.adonis(richD, sample_data(physeq)$Type,p.adjust.m = "bonferroni")
+```
+
+```{R - Alpha Diversity: Drains}
+richD = estimate_richness(physeq)
+pw.wilcox.test <- pairwise.wilcox.test(richD$Shannon, sample_data(physeq)$Type, p.adj = "bonf")
+pw.wilcox.test
+```
+
