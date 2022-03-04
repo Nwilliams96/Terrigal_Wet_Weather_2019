@@ -1,0 +1,302 @@
+---
+title: RBW_BetaDiversity
+Date: 31.5.21
+Correspondance: nathanwilliams22@gmail.com
+---
+
+```{r Load Data}
+library("phyloseq")
+library("vegan")
+library("ggplot2")
+library("dplyr")
+library("ape")
+library("tidyverse")
+library("tidyr")
+source('~/Dropbox/UTS/PhD/Projects/Chapter2_RoseBay/Data_Analysis/16S/Scripts/pairwise.adonis.r')
+```
+
+```{r Load Data}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+sample_data <- read_csv('sample_data.csv')
+asv_rarefy30k_long <- read_csv("asv_rarefy30k_long.csv")
+```
+
+```{r Theme}
+NathanTheme <- list(   #scale_x_discrete(limits=(locations)),
+                       theme(axis.title.x = element_text(vjust = 0, hjust = 0.5, size = 16)),
+                       theme(axis.title.y = element_text(vjust = 1, hjust = 0.5, size = 16)),
+                       theme(axis.text=element_text(size=10)),
+                       theme(axis.text.x = element_text(hjust=-3, size = 4, angle = 90)),
+                       theme(axis.text.y = element_text(hjust=1, size = 12, angle = 0)),
+                       theme(panel.border = element_blank(), panel.grid.major = element_blank(), 
+                             panel.background = element_blank(),panel.grid.minor = element_blank(), 
+                             axis.line = element_line(colour = 'black')))
+```
+
+```{r filter out bad samples and save}
+asv_rarefy30k_long <- asv_rarefy30k_long %>% filter(!SampleID %in% ("T2300")) %>% filter(!SampleID %in% ("T2629")) %>% filter(!SampleID %in% ("T2623")) %>% filter(!SampleID %in% ("T2096")) %>% filter(!SampleID %in% ("T2008")) %>% filter(!SampleID %in% ("T2041")) %>% filter(!SampleID %in% ("T2141")) %>% filter(!SampleID %in% ("T2158")) %>% filter(!SampleID %in% ("T2589"))
+sample_data <- sample_data %>% filter(!SampleID %in% ("T2300")) %>% filter(!SampleID %in% ("T2629")) %>% filter(!SampleID %in% ("T2623")) %>% filter(!SampleID %in% ("T2096")) %>% filter(!SampleID %in% ("T2008")) %>% filter(!SampleID %in% ("T2041")) %>% filter(!SampleID %in% ("T2141")) %>% filter(!SampleID %in% ("T2158")) %>% filter(!SampleID %in% ("T2589"))
+```
+
+```{r write}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+write_csv(asv_rarefy30k_long,"asv_rarefy30k_long.csv")
+write_csv(sample_data,"sample_data.csv")
+
+```
+
+```{R - Subset data}
+library(tidyverse)
+library(vegan)
+library(dplyr)
+library(reshape2)
+
+Drains <- asv_rarefy30k_long %>% filter(Type %in% c("Drain"))
+Nearshore <- asv_rarefy30k_long %>% filter(Type %in% c('Nearhsore'))
+Offshore_5m <- asv_rarefy30k_long %>% filter(Type %in% c("5m"))
+Offshore_10m <- asv_rarefy30k_long %>% filter(Type %in% c("10m"))
+Lagoons <- asv_rarefy30k_long %>% filter(Type %in% c("Lagoon"))
+Seawater <- rbind(Nearshore,Offshore_5m,Offshore_10m)
+BW <- asv_rarefy30k_long %>% filter(Location %in% ("SW.5.1"))
+```
+
+```{R - Test 1 Seawater V Drains}
+Test1 <- asv_rarefy30k_long %>% dplyr::select(ASV_name, Abundance_Vegan_Rarefied, SampleID)
+Test1 <- Test1 %>% filter(!Abundance_Vegan_Rarefied ==0)
+Test1.asvs.wide.OFG <- reshape2::dcast(Test1, SampleID~ASV_name, value.var = "Abundance_Vegan_Rarefied", fill=0)
+rownames(Test1.asvs.wide.OFG) <- Test1.asvs.wide.OFG$SampleID
+Test1_nmds_df <- Test1.asvs.wide.OFG [,-c(1)]
+```
+
+```{r Test 1 Seawater V Drains NMDS}
+Test1.nMDS <- metaMDS(Test1_nmds_df, distance = "bray", try =99, trymax=100, autotransform = F)
+names(Test1.nMDS)
+Test1.nMDS.points <- cbind(Test1.asvs.wide.OFG[,c(1)], as.data.frame(Test1.nMDS$points))
+colnames(Test1.nMDS.points)[1] <- "SampleID"
+Test1.nMDS.points <- Test1.nMDS.points %>% mutate(code=as.character(SampleID)) %>% left_join(sample_data)
+```
+
+```{r Test 1 Seawater V Drains MDS}
+library(tidyverse)
+MDS.Test1 <- ggplot(Test1.nMDS.points, aes(x=MDS1, y=MDS2, color = `Type`)) + 
+  geom_point(aes(size=0.4, alpha=0.5)) + 
+  geom_text(aes(label=SampleID),hjust=0, vjust=0) +
+  NathanTheme
+MDS.Test1
+```
+
+```{r Test 1 Seawater V Drains Pairwise Adonis}
+Test1.Adonis_df <- Test1.asvs.wide.OFG %>% left_join(sample_data)
+Test1.Adonis_matrix <- as.matrix(Test1.Adonis_df[,-c(1,114610:114619)])
+rownames(Test1.Adonis_matrix) <- Test1.Adonis_df$SampleID
+Test1.pwAdonis <- pairwise.adonis(Test1.Adonis_matrix, Test1.Adonis_df$Type, p.adjust.m = "bonferroni")
+Test1.Adonis <- adonis(Test1.Adonis_matrix ~ Test1.Adonis_df$Distance_Offshore, p.adjust.m = "bonferroni")
+summary.pwadonis(Test1.Adonis)
+```
+
+```{r Export Test 1}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+write_csv(Test1.pwAdonis,"Test1.pwAdonis.csv")
+```
+
+```{R Test 2 Seawater Dry vs Wet}
+Test2 <- asv_rarefy30k_long %>% filter(!Type %in% ("Drain")) %>% filter(!Type %in% ("Lagoon"))
+Test2_subset <- Test2 %>% dplyr::select(ASV_name, Abundance_Vegan_Rarefied, SampleID)
+Test2_subset <- Test2_subset %>% filter(!Abundance_Vegan_Rarefied ==0)
+Test2.asvs.wide.OFG <- reshape2::dcast(Test2_subset , SampleID~ASV_name, value.var = "Abundance_Vegan_Rarefied", fill=0)
+rownames(Test2.asvs.wide.OFG) <- Test2.asvs.wide.OFG$SampleID
+Test2_nmds_df <- Test2.asvs.wide.OFG [,-c(1)]
+```
+
+```{r Test 2 Seawater Dry vs Wet NMDS}
+Test2.nMDS <- metaMDS(Test2_nmds_df, distance = "bray", try =99, trymax=100, autotransform = F)
+names(Test2.nMDS)
+Test2.nMDS.points <- cbind(Test2.asvs.wide.OFG[,c(1)], as.data.frame(Test2.nMDS$points))
+colnames(Test2.nMDS.points)[1] <- "SampleID"
+Test2.nMDS.points <- Test2.nMDS.points %>% mutate(code=as.character(SampleID)) %>% left_join(sample_data)
+```
+
+```{r Test 2 Seawater Dry vs Wet MDS}
+library(tidyverse)
+MDS.Abundance <- ggplot(Test2.nMDS.points , aes(x=MDS1, y=MDS2, color = `Weather`)) + 
+ geom_point(aes(size=0.4, alpha=0.5)) +
+scale_colour_manual(values=c("Two_Weeks_Pre-rain" = "#ffa005", "3day_Pre-rain"="#aa6b00", "20mm-rain"="#437ca4" , "40mm-rain_1"="#00232b", "40mm-rain_2"="297fa0", "5day_Post-rain"="#d0ab05")) +
+  NathanTheme
+MDS.Abundance
+```
+
+```{r Test 2 Seawater Dry vs Wet Pairwise Adonis}
+Test2.Adonis_df <- Test2.asvs.wide.OFG %>% left_join(sample_data)
+Test2.Adonis_matrix <- as.matrix(Test2.Adonis_df[,-c(1,73973:73978)])
+rownames(Test2.Adonis_matrix) <- Test2.Adonis_df$SampleID
+Test2.pwAdonis <- pairwise.adonis(Test2.Adonis_matrix, Test2.Adonis_df$Weather, p.adjust.m = "bonferroni")
+```
+
+```{r Export Test 2}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+write_csv(Test2.pwAdonis,"Test2.pwAdonis.csv")
+```
+
+```{R Test 3 Are the drains and lagoons different from each other?}
+Test3 <- rbind(Lagoons, BW, Drains) %>% filter(!Location %in% ("L.6.4"))
+Test3 <- Test3 %>% filter(!SampleID %in% ("T2300")) %>% filter(!SampleID %in% ("T2629")) %>% filter(!SampleID %in% ("T2623")) %>% filter(!SampleID %in% ("T2096"))
+Test3_subset <- Test3 %>% dplyr::select(ASV_name, Abundance_Vegan_Rarefied, SampleID)
+Test3_subset <- Test3_subset %>% filter(!Abundance_Vegan_Rarefied ==0)
+Test3.asvs.wide.OFG <- reshape2::dcast(Test3_subset , SampleID~ASV_name, value.var = "Abundance_Vegan_Rarefied", fill=0)
+rownames(Test3.asvs.wide.OFG) <- Test3.asvs.wide.OFG$SampleID
+Test3_nmds_df <- Test3.asvs.wide.OFG [,-c(1)]
+```
+
+```{r  Test 3 Are the drains and lagoons different from each other? NMDS}
+Test3.nMDS <- metaMDS(Test3_nmds_df, distance = "bray", try =99, trymax=100, autotransform = F)
+names(Test3.nMDS)
+Test3.nMDS.points <- cbind(Test3.asvs.wide.OFG[,c(1)], as.data.frame(Test3.nMDS$points))
+colnames(Test3.nMDS.points)[1] <- "SampleID"
+Test3.nMDS.points <- Test3.nMDS.points %>% mutate(code=as.character(SampleID)) %>% left_join(sample_data)
+```
+
+```{r Test 3  Test 3 Are the drains and lagoons different from each other? MDS}
+library(tidyverse)
+MDS.Abundance <- ggplot(Test3.nMDS.points , aes(x=MDS1, y=MDS2, color = Location)) + 
+ geom_point(aes(size=0.4, alpha=0.5)) +
+ scale_colour_manual(values=c("D.1.0" = "#606251", "D.2.0"="#40b500", "D.3.0"="#cbffb7", "D.4.0"="#00c563", "L.1.4"="#da9496", "L.2.4"="#e6746e",
+                              "L.3.4" = "#c39788", "L.4.4" = "#80421d", "L.5.4" ="#fcc9a8", "SW.5.1" = "#295c67")) +
+ #geom_text(aes(label=SampleID),hjust=0, vjust=0) +
+ NathanTheme
+MDS.Abundance
+```
+
+```{r Test 3  Test 3 Are the drains and lagoons different from each other? Adonis}
+Test3.Adonis_df <- Test3.asvs.wide.OFG %>% left_join(sample_data)
+Test3.Adonis_matrix <- as.matrix(Test3.Adonis_df[,-c(1,57676:57681)])
+rownames(Test3.Adonis_matrix) <- Test3.Adonis_df$SampleID
+Test3.pwAdonis <- pairwise.adonis(Test3.Adonis_matrix, Test3.Adonis_df$Location, p.adjust.m = "bonferroni")
+```
+
+```{r Export Test 3}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+write_csv(Test3.pwAdonis,"Test3.pwAdonis.csv")
+```
+
+```{R Test 4 Are the drains and lagoons different from each other?}
+Test4 <- Drains 
+Test4_subset <- Test4 %>% dplyr::select(ASV_name, Abundance_Vegan_Rarefied, SampleID)
+Test4_subset <- Test4_subset %>% filter(!Abundance_Vegan_Rarefied ==0)
+Test4.asvs.wide.OFG <- reshape2::dcast(Test4_subset , SampleID~ASV_name, value.var = "Abundance_Vegan_Rarefied", fill=0)
+rownames(Test4.asvs.wide.OFG) <- Test4.asvs.wide.OFG$SampleID
+Test4_nmds_df <- Test4.asvs.wide.OFG [,-c(1)]
+```
+
+```{r  Test 4 Are the drains and lagoons different from each other? NMDS}
+Test4.nMDS <- metaMDS(Test4_nmds_df, distance = "bray", try =99, trymax=100, autotransform = F)
+names(Test4.nMDS)
+Test4.nMDS.points <- cbind(Test4.asvs.wide.OFG[,c(1)], as.data.frame(Test4.nMDS$points))
+colnames(Test4.nMDS.points)[1] <- "SampleID"
+Test4.nMDS.points <- Test4.nMDS.points %>% mutate(code=as.character(SampleID)) %>% left_join(sample_data)
+```
+
+```{r Test 4  Test 4 Are the drains and lagoons different from each other? MDS}
+library(tidyverse)
+MDS.Abundance <- ggplot(Test4.nMDS.points , aes(x=MDS1, y=MDS2, color = Location)) + 
+ geom_point(aes(size=0.4, alpha=0.5)) +
+ scale_colour_manual(values=c("D.1.0" = "#ff8e3b", "D.2.0"="#01aded", "D.3.0"="#a33f00", "D.4.0"="#971081")) +
+ #geom_text(aes(label=SampleID),hjust=0, vjust=0) +
+ NathanTheme
+MDS.Abundance
+```
+
+```{r Test 4  Test 4 Are the drains and lagoons different from each other? Adonis}
+Test4.Adonis_df <- Test4.asvs.wide.OFG %>% left_join(sample_data)
+Test4.Adonis_matrix <- as.matrix(Test4.Adonis_df[,-c(1,35137:35144)])
+rownames(Test4.Adonis_matrix) <- Test4.Adonis_df$SampleID
+Test4.Adonis <- adonis(Test4.Adonis_matrix ~ Test4.Adonis_df$Location, p.adjust.m = "bonferroni")
+```
+
+```{r Export Test 4}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+write_csv(Test4.pwAdonis,"Test4.pwAdonis.csv")
+```
+
+```{r Test 3 Investigations BW}
+BW <- BW %>% unite('FGID.Location.Day', c(FGID, Location, Weather), remove=F, sep=';')
+BW <- BW %>% unite('Location.SampleID', c(Location, SampleID), remove=F, sep='_')
+df.mean <- BW  %>% group_by(FGID.Location.Day) %>% summarise(mean.abundance=mean(Abundance_Vegan_Rarefied))
+df.mean.top <- df.mean %>%  arrange(desc(df.mean$mean.abundance))
+df.mean.top  <- df.mean.top  %>% mutate(Total.mean.abundance = sum(mean.abundance))
+df.mean.top  <- df.mean.top  %>% mutate(PercentageAbundance = (mean.abundance/Total.mean.abundance)*100)
+df.mean.top  <- df.mean.top  %>% mutate(Cumulative.Abundance = cumsum(PercentageAbundance))
+Cumsum <- df.mean.top %>% left_join(BW)
+
+Top100 <- df.mean.top %>% slice(1:100)
+Top100 <- Top100 %>% left_join(BW)
+
+Top100BW.bp <- Top100 %>% ggplot(aes(x=SampleID, y=RA, fill=(Family))) + 
+  geom_bar(stat='identity') +
+  #scale_fill_manual(values=c(C21)) +
+  labs( x= 'Location', y= 'Relative Abundance') +
+  NathanTheme
+Top100BW.bp
+```
+
+```{r Test 3 Investigations Lagoons}
+Lagoons <- Lagoons %>% unite('FGID.Location.Day', c(FGID, Location, Weather), remove=F, sep=';')
+Lagoons <- Lagoons %>% unite('Location.Day.SampleID', c(Location, Weather), remove=F, sep='_')
+df.mean <- Lagoons  %>% group_by(FGID.Location.Day) %>% summarise(mean.abundance=mean(Abundance_Vegan_Rarefied))
+df.mean.top <- df.mean %>%  arrange(desc(df.mean$mean.abundance))
+df.mean.top  <- df.mean.top  %>% mutate(Total.mean.abundance = sum(mean.abundance))
+df.mean.top  <- df.mean.top  %>% mutate(PercentageAbundance = (mean.abundance/Total.mean.abundance)*100)
+df.mean.top  <- df.mean.top  %>% mutate(Cumulative.Abundance = cumsum(PercentageAbundance))
+Cumsum <- df.mean.top %>% left_join(Lagoons)
+
+Top100 <- df.mean.top %>% slice(1:500)
+Top100 <- Top100 %>% left_join(Lagoons)
+
+Top100Lagoons.bp <- Top100 %>% ggplot(aes(x=SampleID, y=RA, fill=(Family))) + 
+  geom_bar(stat='identity') +
+  #scale_fill_manual(values=c(C21)) +
+  labs( x= 'Location', y= 'Relative Abundance') +
+  NathanTheme
+Top100Lagoons.bp
+```
+
+```{r Test 3 Investigations Drains}
+Drains <- Drains %>% unite('FGID.Location.Day', c(FGID, Location, Weather), remove=F, sep=';')
+Drains <- Drains %>% unite('Location.Day.SampleID', c(Location, Weather), remove=F, sep='_')
+df.mean <- Drains  %>% group_by(FGID.Location.Day) %>% summarise(mean.abundance=mean(Abundance_Vegan_Rarefied))
+df.mean.top <- df.mean %>%  arrange(desc(df.mean$mean.abundance))
+df.mean.top  <- df.mean.top  %>% mutate(Total.mean.abundance = sum(mean.abundance))
+df.mean.top  <- df.mean.top  %>% mutate(PercentageAbundance = (mean.abundance/Total.mean.abundance)*100)
+df.mean.top  <- df.mean.top  %>% mutate(Cumulative.Abundance = cumsum(PercentageAbundance))
+Cumsum <- df.mean.top %>% left_join(Drains)
+
+Top100 <- df.mean.top %>% slice(1:500)
+Top100 <- Top100 %>% left_join(Drains)
+
+Top100Drains.bp <- Top100 %>% ggplot(aes(x=SampleID, y=RA, fill=(Family))) + 
+  geom_bar(stat='identity') +
+  #scale_fill_manual(values=c(C21)) +
+  labs( x= 'Location', y= 'Relative Abundance') +
+  NathanTheme
+Top100Drains.bp
+```
+
+```{r Test 4 Investigations Seawater}
+Seawater <- Seawater %>% unite('FGID.Location.Day', c(FGID, Location, Weather), remove=F, sep=';')
+Seawater <- Seawater %>% unite('Location.SampleID', c(Location, SampleID), remove=F, sep='_')
+df.mean <- Seawater  %>% group_by(FGID.Location.Day) %>% summarise(mean.abundance=mean(Abundance_Vegan_Rarefied))
+df.mean.top <- df.mean %>%  arrange(desc(df.mean$mean.abundance))
+df.mean.top  <- df.mean.top  %>% mutate(Total.mean.abundance = sum(mean.abundance))
+df.mean.top  <- df.mean.top  %>% mutate(PercentageAbundance = (mean.abundance/Total.mean.abundance)*100)
+df.mean.top  <- df.mean.top  %>% mutate(Cumulative.Abundance = cumsum(PercentageAbundance))
+Cumsum <- df.mean.top %>% left_join(Seawater)
+
+Top100 <- df.mean.top %>% slice(1:5000)
+Top100 <- Top100 %>% left_join(Seawater)
+
+Top100Seawater.bp <- Top100 %>% ggplot(aes(x=SampleID, y=RA, fill=(Family))) + 
+  geom_bar(stat='identity') +
+  #scale_fill_manual(values=c(C21)) +
+  labs( x= 'Location', y= 'Relative Abundance') +
+  NathanTheme
+Top100Seawater.bp
+```
