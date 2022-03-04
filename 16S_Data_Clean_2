@@ -1,0 +1,109 @@
+---
+title: "This code is for the analysis of 16S Sequencing Data from a Wet Weather Runoff Experiment in Terrigal 2019"
+author: "Nathan Williams"
+date: "22/10/2020"
+output: html_document
+---
+
+```{r Setup}
+#Load dependencies
+library("gridExtra")
+library("vegan")
+library("metacoder")
+library("taxa")
+library("phyloseq")
+library("ggplot2")
+library("dplyr")
+library("readr")
+library("stringr")
+library("agricolae")
+library("ape")
+library("tidyverse")
+library("tidyr")
+library("ggpubr")
+library("metagMisc")
+library("microbiome")
+```
+
+```{r Locations etc.}
+Locations <- c("SW.0.1","SW.0.2","SW.0.3","D.1.0","SW.1.1","SW.1.2","SW.1.3","D.2.0","SW.2.1","SW.2.2","SW.2.3","D.4.0","SW.4.1","SW.4.2","SW.4.3","SW.5.1","SW.5.2","SW.5.3","SW.6.1","SW.6.2","SW.6.3","SW.7.1","SW.7.2","SW.7.3","SW.8.1","SW.8.2","SW.8.3","SW.9.1","SW.9.2","SW.9.3","L.1.4","L.2.4","L.3.4","L.4.4","L.5.4")
+
+Drains <- c("D.1.0","D.2.0","D.4.0")
+
+Transect1 <- c("SW0.1","SW1.1","SW2.1","SW4.1","SW5.1","SW6.1","SW7.1","SW8.1","SW9.1")
+
+Transect2 <- c("SW0.2","SW1.2","SW2.2","SW4.2","SW5.2","SW6.2","SW7.2","SW8.2","SW9.2")
+
+Transect3 <- c("SW0.3","SW1.3","SW2.3","SW4.3","SW5.3","SW6.3","SW7.3","SW8.3","SW9.3")
+
+Lagoon_sites <- c("L.1.4","L.2.4","L.3.4","L.4.4","L.5.4")
+
+Seawater_Sites <-c("SW.0.1","SW.0.2","SW.0.3","SW.1.1","SW.1.2","SW.1.3","SW.2.1","SW.2.2","SW.2.3","SW.4.1","SW.4.2","SW.4.3","SW.5.1","SW.5.2","SW.5.3","SW.6.1","SW.6.2","SW.6.3","SW.7.1","SW.7.2","SW.7.3","SW.8.1","SW.8.2","SW.8.3","SW.9.1","SW.9.2","SW.9.3")
+
+#Different colours for the figures later
+
+C21 <- c("#cfd5b8","#eb90b5","#84f0ce","#fdbefe","#7fbd82","#63bbfa","#d5b871","#57efff","#f5968e","#94fff1","#e49a7e","#6bcfa9","#ffb6ba","#b2ecac","#bfd0ff","#dfdb8e","#9cd4ff","#ffc38e","#89b1ca","#d6f1a6","#caa0b5","#faffd7","#ffd8ef","#8ab694","#ffcfce","#a1b189","#dbffe9","#cea472","#b1d3c2","#ffe5ad")
+
+C30 <- c("#ffc7d4","#3eccc1","#ea95c3","#b6efae","#eaa0d8","#e2efa1","#95aef5","#c1bc71","#4bb7f1","#ffefaf","#bba0df","#a3b86f","#f5cdff","#8eb77a","#ffbde9","#6fba99", "#e4988d","#ffcec3","#5abab9","#c2a0c8","#c3ffd6","#bbc8ff","#a4b08a","#a7d1ff","#ffe1c3","#98fffd","#a8aac6","#a4ffe9","#eaffdc")
+
+C10 <- c("#d79f82","#f59fae","#bdbceb","#eeb3ac","#e9b2d0","#76d9d5","#b2dbad","#dad1a4","#8be3ff","#ffce9a")
+
+
+#Theme for plot
+NathanTheme <- list(   theme(axis.title.x = element_text(vjust = 0, hjust = 0.5, size = 16)),
+                       theme(axis.title.y = element_text(vjust = 1, hjust = 0.5, size = 16)),
+                       theme(axis.text=element_text(size=10)),
+                       theme(axis.text.x = element_text(hjust=1, size = 14, angle = 90)),
+                       theme(axis.text.y = element_text(hjust=1, size = 14, angle = 0)),
+                       theme(panel.border = element_blank(), panel.grid.major = element_blank(), 
+                             panel.background = element_blank(),panel.grid.minor = element_blank(), 
+                             axis.line = element_line(colour = 'black')))
+
+ThemePie<- list (      theme(axis.title.x = element_blank()),
+                       theme(axis.title.y = element_blank()),
+                       theme(axis.text.x = element_blank()),
+                       theme(axis.text.y = element_blank()),
+                       theme(panel.border = element_blank(), panel.grid.major = element_blank(), 
+                             panel.background = element_blank(),panel.grid.minor = element_blank(), 
+                             axis.line = element_blank()))
+
+```
+
+```{R Load Cleaned Data}
+setwd("~/Dropbox/UTS/PhD/Projects/DPIE/Source_Tracking/Terrigal/Data/16S/Data")
+sample_data <- read_csv('SMD.csv')
+asv_cleaned_long <- read_csv("asv_cleaned_long.csv")
+```
+
+```{r Normalise the Cleaned data}
+#4.1 Make a column for FGID.Location Total and then left join. Next select only the distinct valaues (FGID.Location)
+#4.1.1 Make FGID.Location
+TL <- asv_cleaned_long %>% group_by(FGID.Location) %>% summarise(Total.Location = sum(Abundance))
+#4.1.2 Left join
+asv_cleaned_long <- asv_cleaned_long %>% left_join(TL)
+#4.1.3 select only the distinct values (FGID.Location)
+asv_long_normalised <- asv_cleaned_long %>% distinct(FGID.Location, .keep_all = TRUE)
+
+#4.2 Make a column for the total bacterial ASVs per location, left join and then calculate the RA by dividing FGID.Location/ASVs per location *100
+#4.2.1 Make a column for the total bacterial ASVs per location
+TBL <- asv_cleaned_long %>% group_by(Kingdom,Location) %>% summarise(Total.Bacteria.Location = sum(Abundance))
+#4.2.2 Left join
+asv_long_normalised <- asv_long_normalised %>% left_join(TBL)
+#4.2.3 Calculate the RA by dividing FGID.Location/ASVs per location *100
+asv_long_normalised <- asv_long_normalised %>% mutate(RA = (Total.Location/Total.Bacteria.Location)*100)
+#4.2.4 Create Count_Location to add the RA for each location (should add to 100).
+Count_Location <- asv_long_normalised %>% group_by(Location) %>% summarise(Total = sum(RA))
+
+#8.1 Create a mean and organise by high to low abundance 
+df.mean <- asv_long_normalised %>% group_by(FGID) %>% summarise(mean.abundance=mean(Abundance))
+df.mean.top <- df.mean %>%  arrange(desc(df.mean$mean.abundance))
+df.mean.top <- df.mean.top %>% mutate(Total.mean.abundance = sum(mean.abundance))
+df.mean.top <- df.mean.top %>% mutate(PercentageAbundance = (mean.abundance/Total.mean.abundance)*100)
+df.mean.top <- df.mean.top %>% mutate(Cumulative.Abundance = cumsum(PercentageAbundance))
+Cumsum <- df.mean.top %>% left_join(asv_long_normalised)
+asv_long_normalised <- asv_long_normalised %>% unite('FGID.SampleID', c(FGID, SampleID), remove=F, sep=';')
+asv_long_normalised.avg <- asv_long_normalised %>% distinct(FGID.SampleID)
+
+
+setwd("~/Dropbox/UTS/PhD/Projects/DPIE/Source_Tracking/Terrigal/Data/16S")
+write_csv(asv_long_normalised,'asv_long_normalised.csv')
