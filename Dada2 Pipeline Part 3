@@ -1,0 +1,199 @@
+---
+title: "Dada2.Pipeline.Part3_Terrigal"
+author: "Nathan L R Williams"
+date: "18/01/2021"
+output: html_document
+---
+```{bash}
+#Assign taxonomy on the HPC: I suggest doing the first few steps interactively and then get to a place where you are just assigning taxonomy and you can move to a qsub
+
+screen -S taxonCompileNathan
+qsub -I -q c3b -l ncpus=11,mem=100GB,walltime=8:00:00
+cd to your location where your file is
+cd /shared/c3/projects/Nathan.Williams.12034652/Terrigal/fastq_and_analysis
+module load devel/R-current;
+
+```
+
+```{r Load Packages}
+R
+library(R.utils);
+library(dada2);
+library(ShortRead); packageVersion("ShortRead") # dada2 depends on this
+library(tidyverse); packageVersion("dplyr") # for manipulating data
+library(Biostrings);  # for creating the final graph at the end of the pipeline
+library(Hmisc); packageVersion("Hmisc") # for creating the final graph at the end of the pipeline
+library(plotly); packageVersion("plotly") # enables creation of interactive graphs, especially helpful for quality plots
+library(here); packageVersion("here");
+here();
+library(readr);
+library(Biostrings);
+
+collapsed.chim4 <- readRDS('collapsed200.chim4.rds')
+
+sample <- rownames(collapsed.chim4);
+sequence <- colnames(collapsed.chim4);
+
+# Flip table
+ASV.tablecollapsed.chim4 <- as.data.frame(t(collapsed.chim4));
+#convert row names (which are presently sequences) to the first column in R
+library(data.table)
+setDT(ASV.tablecollapsed.chim4, keep.rownames = TRUE) []
+
+#rename your new first column ASV
+names(ASV.tablecollapsed.chim4)[1] <- "ASV"
+
+paste("The total number of ASVs represented in this data set is: ", length(unique(ASV.tablecollapsed.chim4$ASV)), sep="")
+collapsed.chim4.df <- as.data.frame(ASV.tablecollapsed.chim4)
+
+collapsed.chim4.df.gather <- collapsed.chim4.df %>% gather(key='code', value='abund', -c('ASV'))
+
+chim4.total <- collapsed.chim4.df.gather %>% group_by(code) %>% summarise(sample_total=sum(abund))
+
+TW.chim4 <- collapsed.chim4.df.gather %>% full_join(chim4.total, 'code')
+TW.chim4 <- subset(TW.chim4, select = c(code, ASV, abund, sample_total))
+
+names(TW.chim4)[names(TW.chim4) == "abund"] <- "abund_chim4"
+names(TW.chim4)[names(TW.chim4) == "sample_total"] <- "sampleT_chim4"
+
+#NOW left join the chim.4 plates onto the chim.4 plate
+TW.Long2020aug09 <- TW.chim4  %>% left_join(TW.chim4, 'ASV'='ASV', 'code'='code')
+TW.Long2020aug09[is.na(TW.Long2020aug09)]<- 0
+TW.Long2020aug09$platecode <- "p1"
+
+TW.Long2020aug09 <- TW.Long2020aug09 %>% unite('code2', c("platecode","code"), remove=F, sep=';')
+
+paste("The total number of Samples represented in this data set is: ", length(unique(TW.Long2020aug09$code)), sep="")
+
+TW.Long2020aug09.ref <- TW.Long2020aug09 %>%  group_by(ASV) %>% summarise (asvT=sum(abund_chim4)) %>% arrange(desc(asvT))
+
+write_csv(as.data.frame(TW.Long2020aug09.ref), "TW.Long2020aug09.ref.csv");
+```
+
+```{r}
+setwd("~/Dropbox/UTS/PhD/Projects/DPIE/Source_Tracking/Terrigal/16S/Data")
+TW.Long2020aug09.ref <- read_csv("TW.Long2020aug09.ref.csv")
+```
+
+
+```{r Taxonomy}
+##NOW you can assign taxonomy on the chim4 ASVs, this will assign everything then you can just left join. Copy the following into a .r script and then qsub it TW.Long2020aug09.csv this is what your ref file is called which will be used for taxonomy. Before starting you must know how many ASVs are present in your TW.Long2020aug09.csv you can do this by reading it into R and then looking at how many rows are in the resulting file, this is how many ASVs are present - There are 316994 ASVs. Nano a file called: do-taxaSil138.r, paste the following into your .r file. Silva138 tax file 1 on the hpc, nano this file and save as: do-taxaSil138.r
+
+library(tidyverse);
+library(dada2);
+args = commandArgs(trailingOnly=TRUE);
+p=args[1];
+print(p);
+if (!file.exists(paste0("taxaSilva138.NW.part.", p, ".csv"))){
+refs<-read_csv('TW.Long2020aug09.ref.csv');
+n=1000;
+nr<-nrow(refs);
+print(nr);
+refsplit<-split(refs, rep(1:ceiling(nr/n), each=n, length.out=nr));
+print(length(refsplit));
+taxa<-assignTaxonomy(seqs=refsplit[[p]]$ASV, refFasta='/shared/c3/bio_db/Silva/v138/silva_nr99_v138_wSpecies_train_set.fa', outputBootstraps=T, multithread=4, tryRC=T);
+taxadf<- as.data.frame(taxa);
+taxadf$asv<-rownames(taxadf);
+write_csv(taxadf, paste0("taxaSilva138.NW.part.", p, ".csv"));
+head(taxadf);
+q()
+}
+
+
+```
+
+```{bash Taxonomy}
+#Now you have to nano a .sh file for the taxa called: taxa.sh
+#Paste the following into this new file, NOTE you are calling up your previously made .r script which is called: do-taxaSil138.r
+#NOTE You have to change directories in this file to match your current working directory where your ref file = chim.4.ref.2020aug09.csv and .r files are located
+
+# When calling for the qsub, NOTE the -J 1-318 this denotes how many files you will have when you divide your ref file by 1000, this is splitting your ref ASVs into groups of 1000 ASVs per file so that it goes faster. That means that you have to take the total number of rows in your ref file and divide that by 1000 in this example my ref file as 316994 ASVs, that means I need to have it divided into 318 files of 1000 each 
+
+########
+
+#!/bin/bash
+
+#PBS -N silva138
+#PBS -l ncpus=4
+#PBS -l mem=32GB
+#PBS -l walltime=02:00:00
+module load devel/c8/R-4.0.2
+#module load devel/perl-current
+cd /shared/c3/projects/Nathan.Williams.12034652/Terrigal/fastq_and_analysis/Taxonomy
+echo "Job ID is ${PBS_JOB_ID}"
+echo "Job Array ID is ${PBS_ARRAY_INDEX}"
+echo "Timestamp is $(date +%F_%T)"
+echo "Directory is $(pwd)"
+echo "Running on host $(hostname)"
+echo "Working directory is ${PBS_O_WORKDIR}"
+echo "Job has the following nodes/cores:"
+cat ${PBS_NODEFILE}
+#This script runs the 2nd part of the dada2 pipeline to generate ASVs
+#It takes an input of paired illumina fastq files after they have been processed with cutadapt
+#PARAMETERS=$(awk -v line=${PBS_ARRAY_INDEX} '{if (NR == line) { print $0; };}' file.conf)
+date +%F_%T
+Rscript --verbose /shared/c3/projects/Nathan.Williams.12034652/Terrigal/fastq_and_analysis/Taxonomy/do-taxaSil138.r ${PBS_ARRAY_INDEX}  > ${PBS_ARRAY_INDEX}.138taxa.out 
+date +%F_%T
+
+#qsub -J 1-3 -q c3b taxa.sh
+
+#qsub -J 1-3 taxa.sh 
+```
+
+
+```{bash Clean up your Taxonomy folder}
+#NOW You are almost done with your assigning! You should have 317 files that are called: taxaSilva138.TW.part.10.csv. You have to compile them together to make one taxonomy file. I suggest you do this interactively. Open a screen inside of the same file that has all of these taxonomy files inside.
+
+mv /shared/c3/projects/Nathan.Williams.12034652/Rose-Bay/fastq_and_analysis/Taxonomy/TW.Long2020aug09.ref.csv /shared/c3/projects/Nathan.Williams.12034652/Rose-Bay/fastq_and_analysis/
+
+rm -r *.out
+rm -r silva138.e*
+rm -r silva138.o*
+
+screen -S taxonCompile
+qsub -I -q c3b -l ncpus=4,mem=100GB,walltime=8:00:00 or qsub -I -l ncpus=4,mem=50GB,walltime=8:00:00
+cd /shared/c3/projects/Nathan.Williams.12034652/Terrigal/fastq_and_analysis/Taxonomy
+module load devel/R-current;
+R
+```
+
+
+```{r}
+  library(R.utils);
+  library(dada2);
+  library(ShortRead); packageVersion("ShortRead") # dada2 depends on this
+  library(tidyverse); packageVersion("dplyr") # for manipulating data
+  library(Biostrings);  # for creating the final graph at the end of the pipeline
+  library(Hmisc); packageVersion("Hmisc") # for creating the final graph at the end of the pipeline
+  library(plotly); packageVersion("plotly") # enables creation of interactive graphs, especially helpful for quality plots
+  library(here); packageVersion("here");
+  here();
+  library(readr);
+  library(Biostrings);
+  
+  plates <- read.csv(file = "Plates_TW");
+  
+  #read in all Silva138 files, first read in all the files for Silva138 which has taxonomy to Genus level
+  #you named your files this above: taxaSilva138.NW.part.
+  
+  taxaSilva138<-list.files(pattern='taxaSilva138.NW.part.')
+  taxaSilva138.list<-list('vector', length(taxaSilva138))
+  taxaSilva138.list<- lapply(taxaSilva138, function(x) read_csv(x, guess_max = 300000))
+  
+  taxaSilva138.bind<-list('vector', length(taxaSilva138.list))
+  for (i in seq_along(taxaSilva138.list)){
+    taxaSilva138.bind[[i]]<- taxaSilva138.list[[i]] %>% mutate('platecode'=names(taxaSilva138.list)[i])
+  }
+  taxaSilva138.bind<-bind_rows(taxaSilva138.bind[], .id = "column_label")
+  
+  taxaSilva138.bind$tax.Kingdom <- forcats::fct_explicit_na(taxaSilva138.bind$tax.Kingdom, 'k_unassigned')
+  taxaSilva138.bind$tax.Phylum <- forcats::fct_explicit_na(taxaSilva138.bind$tax.Phylum, 'p_unassigned')
+  taxaSilva138.bind$tax.Class <- forcats::fct_explicit_na(taxaSilva138.bind$tax.Class, 'c_unassigned')
+  taxaSilva138.bind$tax.Order <- forcats::fct_explicit_na(taxaSilva138.bind$tax.Order, 'o_unassigned')
+  taxaSilva138.bind$tax.Family <- forcats::fct_explicit_na(taxaSilva138.bind$tax.Family, 'f_unassigned')
+  taxaSilva138.bind$tax.Genus <- forcats::fct_explicit_na(taxaSilva138.bind$tax.Genus, 'g_unassigned')
+  taxaSilva138.bind$tax.Species <- forcats::fct_explicit_na(taxaSilva138.bind$tax.Species, 'sp.')
+  #write the bind file which is all of the tax files bound together as one CSV file
+  write_csv(taxaSilva138.bind,'tax_1_Long.silva138.csv')
+
+```
