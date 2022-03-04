@@ -1,0 +1,148 @@
+---
+title: "Mic Tools"
+Author: "Nathan Williams"
+Correspondance: "nathanwilliams22@gmail.com"
+Date: 24/8/21
+---
+
+```{r Load Libraries}
+library("readr")
+library("tidyverse")
+library("tidyr")
+library("data.table")
+```
+
+```{r Load data}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+asv_rarefy30k_long <- read_csv("asv_rarefy30k_long.csv")
+sample_data <- read_csv('SMD.csv')
+```
+
+```{r Load Data}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/statsoutput")
+Lagoon.Ind.Sp <- read_csv('Lagoon.Indicator.species.csv')
+Drains.Ind.Sp  <- read_csv('Drain.Indicator.species.csv')
+Seawater.Ind.Sp <- read_csv('Seawater.Indicator.species.csv')
+```
+
+```{r Make lists}
+Drains.Ind.Sp <- Drains.Ind.Sp %>% distinct(rn)
+Drains.Ind.Sp <- Drains.Ind.Sp %>% rename(FGID = rn)
+Drains.Ind.Sp.taxa <- Drains.Ind.Sp %>% left_join(asv_rarefy30k_long)
+```
+
+```{r Make lists}
+Lagoon.Ind.Sp <- Lagoon.Ind.Sp %>% distinct(rn)
+Lagoon.Ind.Sp <- Lagoon.Ind.Sp %>% rename(FGID = rn)
+Lagoon.Ind.Sp.taxa <- Lagoon.Ind.Sp %>% left_join(asv_rarefy30k_long)
+```
+
+```{r Make lists}
+Seawater.Ind.Sp <- Seawater.Ind.Sp %>% distinct(rn)
+Seawater.Ind.Sp <- Seawater.Ind.Sp %>% rename(FGID = rn)
+Seawater.Ind.Sp.taxa <- Seawater.Ind.Sp %>% left_join(asv_rarefy30k_long)
+```
+
+```{r Join in abr qpcr data}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+abr_qpcr <- read_csv("Abr_qPCR_data.csv")
+```
+
+```{r prepare for mictools}
+Abundance <- Seawater.Ind.Sp.taxa %>% dplyr::select(FGID, SampleID, Abundance_Vegan_Rarefied) %>% distinct()
+Abundance.spread <- Abundance %>% spread(key='SampleID', value='Abundance_Vegan_Rarefied', fill=0)
+rownames(sample_data) <- sample_data$SampleID
+L.matrix.simper <-  as.matrix(Abundance.spread[,-c(1)])
+rownames(L.matrix.simper) <- Abundance.spread$FGID
+L.matrix.simper.t <- t(L.matrix.simper)
+L.matrix.nz <- L.matrix.simper.t[,colSums(L.matrix.simper.t)!=0]
+L.matrix.nz <- as.data.frame(L.matrix.nz)
+L.matrix.nz <- tibble::rownames_to_column(L.matrix.nz, "SampleID")
+Mictools.dataframe <- L.matrix.nz %>% left_join(abr_qpcr)
+```
+
+```{r write Mictools.dataframe}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/statsoutput")
+write_csv(Mictools.dataframe, "Mictools.dataframe.Seawater.csv")
+```
+
+```{bash}
+screen -S MicTools.Ind.Species
+
+qsub -I -q c3b -l ncpus=11,mem=188GB,walltime=48:00:00
+
+cd /shared/c3/projects/Nathan.Williams.12034652/Terrigal/fastq_and_analysis/MicTools/
+
+module load devel/c8/python-3.8.3
+```
+
+```{bash}
+mictools null Mictools.dataframe.Seawater.txt null_dist.txt
+ 
+mictools pval Mictools.dataframe.Seawater.txt null_dist.txt Results/
+ 
+mictools adjust Results/pval.txt Results/
+ 
+mictools strength Mictools.dataframe.Seawater.txt Results/pval.txt Mictools.Seawater.Results.txt
+```
+                            
+```{r Load data in and analyse}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/statsoutput")
+Lagoon_Correlations <- read_tsv("Mictools.Lagoon.Results.txt")
+Drain_Correlations <- read_tsv("Mictools.Drain.Results.txt")
+Seawater_Correlations <- read_tsv("Mictools.Seawater.Results.txt")
+```
+
+```{r }
+Seawater_Correlations.Filtered <- Seawater_Correlations %>% filter(!TICePVal > 0.05)
+Seawater_Correlations.Filtered <- Seawater_Correlations.Filtered %>% filter(!TICePVal > 0.05)
+Seawater_Correlations.Filtered <- Seawater_Correlations.Filtered %>% filter(!PearsonR < 0)
+```
+
+```{r }
+Lagoon_Correlations.Filtered <- Lagoon_Correlations %>% filter(!TICePVal > 0.05)
+Lagoon_Correlations.Filtered <- Lagoon_Correlations.Filtered %>% filter(!TICePVal > 0.05)
+Lagoon_Correlations.Filtered <- Lagoon_Correlations.Filtered %>% filter(!PearsonR < 0)
+```
+
+```{r}
+Drain_Correlations.Filtered <- Drain_Correlations %>% filter(!TICePVal > 0.05)
+Drain_Correlations.Filtered <- Drain_Correlations.Filtered %>% filter(!TICePVal > 0.05)
+Drain_Correlations.Filtered <- Drain_Correlations.Filtered %>% filter(!PearsonR < 0)
+```
+
+```{r Filter Data to just Abr Genes}
+tetA.Correlations.L <- Seawater_Correlations.Filtered %>% filter(Var2 == ("tetA"))
+Sul1.Correlations.L <- Seawater_Correlations.Filtered %>% filter(Var2 == ("Sul1"))
+qnrS.Correlations.L <- Seawater_Correlations.Filtered %>% filter(Var2 == ("qnrS"))
+IntI.Correlations.L <- Seawater_Correlations.Filtered %>% filter(Var2 == ("IntI"))
+dfrA1.Correlations.L <- Seawater_Correlations.Filtered %>% filter(Var2 == ("dfrA"))
+Seawater_AbrGenes.Correlations <- rbind(dfrA1.Correlations.L,tetA.Correlations.L,Sul1.Correlations.L,qnrS.Correlations.L,IntI.Correlations.L)
+Seawater_AbrGenes.Correlations <- Seawater_AbrGenes.Correlations %>% dplyr::select(Var1,Var2,PearsonR) %>% rename(Target = Var2) %>% rename(Source = Var1)
+```
+
+```{r Filter Data to just Abr Genes}
+tetA.Correlations.L <- Lagoon_Correlations.Filtered %>% filter(Var2 == ("tetA"))
+Sul1.Correlations.L <- Lagoon_Correlations.Filtered %>% filter(Var2 == ("Sul1"))
+qnrS.Correlations.L <- Lagoon_Correlations.Filtered %>% filter(Var2 == ("qnrS"))
+IntI.Correlations.L <- Lagoon_Correlations.Filtered %>% filter(Var2 == ("IntI"))
+dfrA1.Correlations.L <- Lagoon_Correlations.Filtered %>% filter(Var2 == ("dfrA"))
+Lagoon_AbrGenes.Correlations <- rbind(dfrA1.Correlations.L,tetA.Correlations.L,Sul1.Correlations.L,qnrS.Correlations.L,IntI.Correlations.L)
+Lagoon_AbrGenes.Correlations <- Lagoon_AbrGenes.Correlations %>% dplyr::select(Var1,Var2,PearsonR) %>% rename(Target = Var2) %>% rename(Source = Var1)
+```
+
+```{r Filter Data to just Abr Genes}
+tetA.Correlations.D <- Drain_Correlations.Filtered %>% filter(Var2 == ("tetA"))
+Sul1.Correlations.D <- Drain_Correlations.Filtered %>% filter(Var2 == ("Sul1"))
+qnrS.Correlations.D <- Drain_Correlations.Filtered %>% filter(Var2 == ("qnrS"))
+IntI.Correlations.D <- Drain_Correlations.Filtered %>% filter(Var2 == ("IntI"))
+dfrA1.Correlations.D <- Drain_Correlations.Filtered %>% filter(Var2 == ("dfrA"))
+Drain_AbrGenes.Correlations <- rbind(dfrA1.Correlations.D,tetA.Correlations.D,Sul1.Correlations.D,qnrS.Correlations.D,IntI.Correlations.D)
+Drain_AbrGenes.Correlations <- Drain_AbrGenes.Correlations %>% dplyr::select(Var1,Var2,PearsonR) %>% rename(Target = Var2) %>% rename(Source = Var1)
+```
+
+```{r Export Filtered}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/statsoutput")
+write_csv(Lagoon_AbrGenes.Correlations, "ABR.Indispecies.Lagoon.Correlations.csv")
+write_csv(Drain_AbrGenes.Correlations, "ABR.Indispecies.Drain.Correlations.csv")
+```
