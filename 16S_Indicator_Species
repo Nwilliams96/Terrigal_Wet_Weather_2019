@@ -1,0 +1,278 @@
+---
+title: "Indicator Species Analysis - Terrigal"
+Date: 31.5.21
+Correspondance: nathanwilliams22@gmail.com
+---
+
+```{bash}
+screen -S Indicator.Species
+
+qsub -I -q c3b -l ncpus=11,mem=200GB,walltime=24:00:00
+
+cd /shared/c3/projects/Nathan.Williams.12034652/Terrigal/fastq_and_analysis/Indicator.Species
+
+module load devel/R-current;
+
+R
+```
+
+```{r Theme}
+library("ggplot2")
+#Theme for plot
+NathanTheme <- list(   #scale_x_discrete(limits=(locations)),
+                       theme(axis.title.x = element_text(vjust = 0, hjust = 0.5, size = 16)),
+                       theme(axis.title.y = element_text(vjust = 1, hjust = 0.5, size = 16)),
+                       theme(axis.text=element_text(size=10)),
+                       theme(axis.text.x = element_text(hjust=1, size = 7, angle = 90)),
+                       theme(axis.text.y = element_text(hjust=1, size = 14, angle = 0)),
+                       theme(panel.border = element_blank(), panel.grid.major = element_blank(), 
+                             panel.background = element_blank(),panel.grid.minor = element_blank(), 
+                             axis.line = element_line(colour = 'black')))
+```
+
+```{r Libraries}
+library("readr")
+library("tidyverse")
+library("tidyr")
+library("data.table")
+```
+
+```{r Data import}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+asv_rarefy30k_long <- read_csv("asv_rarefy30k_long.csv")
+df <-asv_rarefy30k_long  %>% dplyr::select(FGID, Abundance_Vegan_Rarefied, SampleID) %>% distinct() %>% pivot_wider(names_from = FGID, values_from = Abundance_Vegan_Rarefied, values_fill = 0)
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+sample_data <- read_csv('SMD.csv')
+```
+
+```{r Arrange data for Indicator Species Analysis}
+library("dplyr")
+#I added in sample metadata to the rarefied wide tables (with asv as the col name)
+pivot.meta  <- sample_data %>% dplyr::select(Ind1, SampleID) %>% left_join(df, 'SampleID')
+pivot.meta <- na.omit(pivot.meta)
+pivot.meta.mat <- as.matrix(pivot.meta[,-c(1,2)])
+head(pivot.meta.mat)
+#pivot.meta.mat2<-pivot.meta.mat[1:618,1:1000]
+rownames(pivot.meta.mat) <- pivot.meta$SampleID;
+pivot.meta.mat[1:10,1:10]
+```
+
+```{r Run the indicator species test}
+library("indicspecies")
+Indicator.Species = multipatt(pivot.meta.mat, as.factor(pivot.meta$Ind1), print.perm = TRUE, control = how(nperm=999));
+saveRDS(Indicator.Species , 'Indicator.Species.RDS')
+Indicator.Species$sign
+#we have to inspect the multipratt value sign 
+```
+
+```{r Import RDS}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/statsoutput")
+Indicator.Species <- read_rds("Indicator.Species.RDS")
+```
+
+```{r extract data}
+#extract table of stats
+indisp.sign <- as.data.table(Indicator.Species$sign, keep.rownames=TRUE)
+#add adjusted p-value
+indisp.sign[ ,p.value.bh:=p.adjust(p.value, method="BH")]
+#now can select only the indicators with adjusted significant p-values
+indisp.sign[p.value.bh<=0.05, ]
+head(indisp.sign)
+indisp.sign.df<-as.data.frame(indisp.sign)
+write_csv(as.data.frame(indisp.sign.df), "indisp.sign.df.csv");
+#dat.multipatt.summary<-capture.output(summary(indisp.sign, indvalcomp=TRUE))
+summary(Indicator.Species, indvalcomp=TRUE)
+```
+
+```{r Filter Datasets}
+Indicator.species.data <- indisp.sign.df %>% filter(!p.value.bh > '0.05')
+Drain.Indicator.species <- Indicator.species.data %>% filter(s.1 == '1') %>% filter(s.2 == '0') %>% filter(s.3 == '0')
+Lagoon.Indicator.species <- Indicator.species.data %>% filter(s.1 == '0') %>% filter(s.2 == '0') %>% filter(s.3 == '1')
+Seawater.Indicator.species <- Indicator.species.data %>% filter(s.1 == '0') %>% filter(s.2 == '1') %>% filter(s.3 == '0')
+```
+
+```{r Export dataset}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/statsoutput")
+#write_csv(Indicator.species.data, "Indicator.species.data.csv")
+#write_csv(matrix.mictools, "Drains.Ind.Sp.taxa.mictools.csv")
+#write_csv(Lagoon.Indicator.species, "Lagoon.Indicator.species.csv")
+write_csv(Seawater.Indicator.species, "Seawater.Indicator.species.csv")
+```
+
+```{r Filter Drain Inidicator Species from dataset}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+asv_rarefy30k_long <- read_csv("asv_rarefy30k_long.csv")
+sample_data <- read_csv('SMD.csv')
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/statsoutput")
+Lagoon.Ind.Sp <- read_csv('Lagoon.Indicator.species.csv')
+Drains.Ind.Sp  <- read_csv('Drain.Indicator.species.csv')
+
+```
+
+```{r Make lists}
+Drains.Ind.Sp <- Drains.Ind.Sp %>% distinct(rn)
+Drains.Ind.Sp <- Drains.Ind.Sp %>% rename(FGID = rn)
+Drains.Ind.Sp.taxa <- Drains.Ind.Sp %>% left_join(asv_rarefy30k_long)
+```
+
+```{r Calculate abundace averages}
+Drains.Ind.Sp.taxa <- Drains.Ind.Sp.taxa %>% unite('ASV_name.Location.Weather', c(ASV_name,Location, Weather), remove=F, sep='_')
+Drains.Ind.Sp.taxa <- Drains.Ind.Sp.taxa %>% group_by(ASV_name,SampleID) %>% mutate(RA = mean(Abundance_Vegan_Rarefied/30000*100))
+Drains.Ind.Sp.taxa <- Drains.Ind.Sp.taxa %>% group_by(ASV_name.Location.Weather) %>% mutate(Average.RA = mean(RA))
+Drains.Ind.Sp.taxa.avg <- Drains.Ind.Sp.taxa %>% distinct(ASV_name.Location.Weather, .keep_all = TRUE)
+```
+
+```{r Filter your top ASVS and filter our drains}
+Drains.Ind.Sp.taxa.avg <- Drains.Ind.Sp.taxa.avg %>% filter(Distance_Offshore %in% ("Drain"))
+Drains.Ind.Sp.taxa.avg <- Drains.Ind.Sp.taxa.avg %>% group_by(ASV) %>% mutate(Average_ASV_Abundance = mean(Average.RA))
+df.mean.D.top <- Drains.Ind.Sp.taxa.avg %>% filter(!Average_ASV_Abundance < 1)
+```
+
+```{r List of top indicator spp}
+Inditcator.Spp.List <- df.mean.D.top %>% group_by(ASV) %>% distinct(ASV, .keep_all = TRUE)
+Inditcator.Spp.List <- Inditcator.Spp.List %>% select(ASV, Kingdom, Order, Class, Family, Genus, Species, Average_ASV_Abundance,FGID)
+List <- Inditcator.Spp.List %>% distinct(FGID)
+
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter2_RoseBay/Data_Analysis/Data/16S/Data")
+write_csv(List, "List.csv")
+
+Indicator.Species.Final <- Inditcator.Spp.List %>% left_join(asv_rarefy30k_long)
+Indicator.Species.Final.Seawater <- Indicator.Species.Final %>% filter(!Distance_Offshore %in% ("Drain"))
+Indicator.Species.Final.Seawater <- Indicator.Species.Final.Seawater %>% unite('ASV_name.Location.Weather', c(ASV_name,Location, Weather), remove=F, sep='_')
+Indicator.Species.Final.Seawater <- Indicator.Species.Final.Seawater %>% unite('Location.Weather', c(Location, Weather), remove=F, sep='_')
+Indicator.Species.Final.Seawater <-Indicator.Species.Final.Seawater %>% group_by(ASV_name,SampleID) %>% mutate(RA = mean(Abundance_Vegan_Rarefied/30000*100))
+Indicator.Species.Final.Seawater <- Indicator.Species.Final.Seawater %>% group_by(ASV_name.Location.Weather) %>% mutate(Average.RA = mean(RA))
+Indicator.Species.Final.Seawater <- Indicator.Species.Final.Seawater %>% distinct(ASV_name.Location.Weather, .keep_all = TRUE)
+Indicator.Species.Final.Seawater <- Indicator.Species.Final.Seawater %>% group_by(Location.Weather) %>% mutate(Total.RA.site = sum(Average.RA))
+```
+
+```{R plot}
+df.mean.D.top <- df.mean.D.top %>% unite('FGS', c(Family, Genus, Species), remove=F, sep='.')
+
+Locations <- c("C1.1","C1.2","C1.3","SW3.1",'SW3.2',"SW3.3","SW4.1","SW4.2","SW4.3","SW5.1","SW5.2","SW5.3","SW6.1","SW6.2","SW6.3","Beachwatch","SW7.1","SW7.2","SW7.3",'SW8.1',"SW8.2","SW8.3","SW9.1","SW9.2","SW9.3","SW10.1","SW10.2","SW10.3","RBE1.4","RBE2.3","RBE3.4")
+  
+Pre_rain <- Indicator.Species.Final.Seawater %>% filter(Weather %in% ("Pre-rainfall")) #%>% distinct(Location, .keep_all = TRUE)
+Light_rain <- Indicator.Species.Final.Seawater %>% filter(Weather %in% ("3.8mm_rainfall")) #%>% distinct(Location, .keep_all = TRUE)
+Heavy_rain <- Indicator.Species.Final.Seawater %>% filter(Weather %in% ("43mm_rainfall")) #%>% distinct(Location, .keep_all = TRUE)
+Post_rain <- Indicator.Species.Final.Seawater %>% filter(Weather %in% ("Post-rainfall")) #%>% distinct(Location, .keep_all = TRUE)
+``` 
+
+```{r Stat tests}
+Test <- Post_rain %>% filter(Distance_Offshore %in% ("Nearshore")) %>% group_by(Distance_Offshore) %>% mutate(Average = mean(Average.RA)) %>% distinct(Average)
+Test2 <- Heavy_rain %>% filter(!Distance_Offshore %in% ("Nearshore"))
+Test3 <- Post_rain %>% distinct(Location, .keep_all = TRUE) 
+```
+
+```{r Map for Source Tracker Data: Libraries}
+library(tidyverse)
+library(oce)
+library(sf)
+library(rgdal)
+library(ggplot2)
+library(rgeos) 
+```
+
+```{r Map for Source Tracker Data: Load data}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter2_RoseBay/Data_Analysis/Data")
+
+shape <- readOGR(dsn = "~/Dropbox/UTS/PhD/Projects/Chapter2_RoseBay/Data_Analysis/Data/Shapefiles/Estuaries/Data/Estuaries.shp", layer = "Estuaries")
+
+my.estuaries<-c("PORT JACKSON HARBOUR","PARRAMATTA RIVER ESTUARY","LANE COVE RIVER ESTUARY",
+                "MIDDLE HARBOUR CREEK ESTUARY","PARRAMATTA RIVER FRESHWATER")
+
+my.estuary.shapes<-shape[shape$NAMETYPE %in% my.estuaries,]
+
+maptheme <- theme(panel.background = element_rect("#dfdbd5"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.background = element_blank(),
+        legend.title = element_blank(),
+        legend.key.size = unit(3,"line"))
+```
+
+```{r Map for Source Tracker Data: Basemap}
+  Basemap <- ggplot() + 
+  geom_polygon(data = fortify(my.estuary.shapes), aes( x = long, y = lat, group = group), fill="lightblue2", color=NA) +
+  maptheme +
+  coord_equal(xlim=c(151.2515,151.2725), ylim=c(-33.875,-33.847)) +
+  labs(x='Longitude', y='Latitude')
+Basemap
+```
+
+```{r Pre-rain Map}
+Prerain_map <- Basemap +
+  geom_point(data=Pre_rain, aes(x=`Longitude`, y=`Latitude`, size=Total.RA.site, color='#d53446'), alpha = 1) + 
+  scale_size(trans = "log10",
+             breaks = c(0.01, 0.1, 1),
+             limits = c(0.003,1)
+             )
+Prerain_map
+```
+
+```{r Light_rain Map}
+Light_rain_map <- Basemap +
+  geom_point(data=Light_rain, aes(x=`Longitude`, y=`Latitude`, size=Total.RA.site, color='#d53446'), alpha = 1) + 
+    scale_size(trans = "log10",
+             breaks = c(0.01, 0.1, 1),
+             limits = c(0.003,1.2)
+             )
+Light_rain_map
+```
+
+```{r Heavy_rain Map}
+Heavy_rain_map <- Basemap +
+  geom_point(data=Heavy_rain, aes(x=`Longitude`, y=`Latitude`, size=Total.RA.site, color='#d53446'), alpha = 1) + 
+        scale_size(trans = "log10",
+             breaks = c(0.01, 0.1, 1),
+             limits = c(0.003,1.2)
+             )
+Heavy_rain_map
+```
+
+```{r Post_rain Map}
+Post_rain_map <- Basemap +
+  geom_point(data=Post_rain, aes(x=`Longitude`, y=`Latitude`, size=Total.RA.site, color='#d53446'), alpha = 1) + 
+        scale_size(trans = "log10",
+             breaks = c(0.01, 0.1, 1),
+             limits = c(0.003,7.6)
+             )
+Post_rain_map
+```
+
+```{r Lists}
+Light_rain.locations <- Light_rain %>% distinct(Location)
+```
+
+```{r Plot}
+Indicator.Species.Final.Seawater <- Indicator.Species.Final.Seawater %>% unite('Location.Weather', c(Location, Weather), remove=F, sep='_')
+Indicator.Species.Final.Seawater <- Indicator.Species.Final.Seawater %>% unite('F.G', c(Family,Genus), remove=F, sep='_')
+Indicator.Species.Final.Seawater <- Indicator.Species.Final.Seawater %>% unite('F.G.S', c(Family,Genus,Species), remove=F, sep='_')
+Post_rain.Indsp.bp <- Indicator.Species.Final.Seawater %>% ggplot(aes(x=Location.Weather, y=Average.RA, fill=(FGID))) + 
+  geom_bar(stat='identity', #colour = 'black'
+           ) +
+  guides(fill = guide_legend(ncol=2)) +
+  labs( x= 'Location', y= 'Relative Abundance') +
+  #scale_x_discrete(limits =(Locations)) +
+  #scale_y_continuous(limits =c(0,2.5)) +
+  NathanTheme
+Post_rain.Indsp.bp
+```
+
+```{r - Test1 Do the water samples differ from each other during dry weather?}
+Test2_subset <- Indicator.Species.Final.Seawater %>% dplyr::select(ASV_name, Abundance_Vegan_Rarefied, SampleID)
+Indicator.Species.Final.Seawater.sampledata <- Indicator.Species.Final.Seawater %>% dplyr::select(SampleID, Weather, Distance_Offshore, Location)
+Test2_subset <- Test2_subset %>% filter(!Abundance_Vegan_Rarefied ==0)
+Test2.asvs.wide.OFG <- reshape2::dcast(Test2_subset , SampleID~ASV_name, value.var = "Abundance_Vegan_Rarefied", fill=0)
+rownames(Test2.asvs.wide.OFG) <- Test2.asvs.wide.OFG$SampleID
+Test2_nmds_df <- Test2.asvs.wide.OFG [,-c(1)]
+```
+
+```{r - Test2 Do the water samples differ from each other during dry weather? Pairwise Adonis}
+library(vegan)
+source('~/Dropbox/UTS/PhD/Projects/Chapter2_RoseBay/Data_Analysis/Data/16S//Scripts/pairwise.adonis.r')
+Test2.Adonis_df <- Test2.asvs.wide.OFG %>% left_join(Indicator.Species.Final.Seawater.sampledata)
+Test2.Adonis_df <- Test2.Adonis_df %>% distinct(SampleID, .keep_all = TRUE)
+Test2.Adonis_matrix <- as.matrix(Test2.Adonis_df[,-c(1,8:11)])
+rownames(Test2.Adonis_matrix) <- Test2.Adonis_df$SampleID
+Test2.Adonis <- pairwise.adonis(Test2.Adonis_matrix, Test2.Adonis_df$Weather, p.adjust.m = "bonferroni")
+```
