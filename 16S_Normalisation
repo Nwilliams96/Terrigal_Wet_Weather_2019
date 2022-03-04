@@ -1,0 +1,210 @@
+---
+title: "RBW Rarefaction"
+Date: 31.5.21
+Correspondance: nathanwilliams22@gmail.com
+---
+
+```{r Libraries}
+library("gridExtra")
+library("vegan")
+library("metacoder")
+library("taxa")
+library("phyloseq")
+library("ggplot2")
+library("dplyr")
+library("readr")
+library("stringr")
+library("agricolae")
+library("ape")
+library("tidyverse")
+library("tidyr")
+library("ggpubr")
+library("metagMisc")
+library("microbiome")
+```
+
+```{r Theme}
+library("ggplot2")
+#Theme for plot
+NathanTheme <- list(   #scale_x_discrete(limits=(locations)),
+                       theme(axis.title.x = element_text(vjust = 0, hjust = 0.5, size = 16)),
+                       theme(axis.title.y = element_text(vjust = 1, hjust = 0.5, size = 16)),
+                       theme(axis.text=element_text(size=10)),
+                       theme(axis.text.x = element_text(hjust=1, size = 14, angle = 0)),
+                       theme(axis.text.y = element_text(hjust=1, size = 14, angle = 0)),
+                       theme(panel.border = element_blank(), panel.grid.major = element_blank(), 
+                             panel.background = element_blank(),panel.grid.minor = element_blank(), 
+                             axis.line = element_line(colour = 'black')))
+```
+
+```{R Load Cleaned Data}
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+sample_data <- read_csv('SMD.csv')
+asv_cleaned_long <- read_csv("asv_cleaned_long.csv")
+physeq <- readRDS("physeq.RDS ")
+```
+
+```{r CSS - object creation}
+library(metagenomeSeq)
+obj =  phyloseq_to_metagenomeSeq(physeq)
+p <- cumNormStatFast(obj)
+obj.norm = cumNorm(obj, p = p)  #this is running it without a condition (or experimental design)
+#condition = obj$Ind1
+#obj.norm.cond = wrenchNorm(obj.norm, condition = condition)
+```
+
+```{r CSS - Export Data}
+mat <- MRcounts(obj.norm, norm = TRUE, log = FALSE)
+mat_df <- as.data.frame(mat)
+mat_df$ASV <- rownames(mat_df)
+mat_df <- cbind(rownames(mat_df), data.frame(mat_df, row.names=NULL))
+names(mat_df)[names(mat_df) == "rownames(mat_df)"] <- "ASV_name"
+mat_long <- mat_df %>% dplyr::select(-ASV) %>% pivot_longer(-ASV_name, names_to = "SampleID", values_to = "abund_css")
+css_df <- asv_cleaned_long %>% left_join(mat_long)
+#css_df <- na.omit(css_df)
+```
+
+```{r CSS - NMDS Data preparation}
+library(tidyverse)
+library(vegan)
+library(dplyr)
+library(reshape2)
+abund_css.subset <- css_df %>% dplyr::select(ASV_name, abund_css, SampleID)
+abund_css.subset <- abund_css.subset %>% filter(!abund_css ==0)
+css.asvs.wide.OFG <- reshape2::dcast(abund_css.subset, SampleID~ASV_name, value.var = "abund_css", fill=0)
+rownames(css.asvs.wide.OFG) <- css.asvs.wide.OFG$SampleID
+css_nmds_df <- css.asvs.wide.OFG[,-c(1)]
+```
+
+```{r CSS - NMDS}
+CSS.nMDS <- metaMDS(css_nmds_df, distance = "bray", try =99, trymax=100, autotransform = F)
+#stressplot(CSS.nMDS)
+#plot(CSS.nMDS)
+names(CSS.nMDS)
+CSS.nMDS.points<-cbind(css.asvs.wide.OFG[,c(1)], as.data.frame(CSS.nMDS$points))
+colnames(CSS.nMDS.points)[1] <- "SampleID"
+CSS.nMDS.points<-CSS.nMDS.points %>% mutate(code=as.character(SampleID)) %>% left_join(sample_data)
+CSS.nMDS.points$Type <- as.character(CSS.nMDS.points$Type)
+```
+
+```{r CSS - MDS}
+library(tidyverse)
+MDS.CSS <- ggplot(CSS.nMDS.points, aes(x=MDS1, y=MDS2, color = `Type`)) + 
+  geom_point(aes(size=0.4, alpha=0.5)) +
+  scale_colour_manual(values=c("Drain" = "#dc5658", "Nearshore"="#bed7a0", "5m"="#76cfe5" , "10m"="#e5bb99", "Lagoon"="#98ddc8")) +
+  NathanTheme
+MDS.CSS
+```
+
+```{R Rarefaction with vegan - Filter to depth}
+Read_Count <- asv_cleaned_long %>% group_by(SampleID) %>% summarise(Total = sum(Abundance))
+asv_cleaned_long <- asv_cleaned_long %>% left_join(Read_Count)
+Rareify.filt <- asv_cleaned_long %>% filter(Total > 30000)
+Rareify.filt <- Rareify.filt %>% filter(!Abundance ==0)
+```
+
+```{r Rarefaction with vegan - Data Prep}
+library(reshape2)
+tableOFG = subset(Rareify.filt, select = c(ASV_name, ASV, SampleID, Abundance))
+tableFGID = subset(tableOFG, select = c(ASV_name,  SampleID, Abundance))
+asvs.wide.OFG <- reshape2::dcast(tableFGID, SampleID~ASV_name, value.var = "Abundance", fill=0)
+```
+
+```{r Rareify}
+rownames(asvs.wide.OFG)<-asvs.wide.OFG$SampleID
+rarefy30k<-rrarefy(asvs.wide.OFG[,-c(1)], 30000)
+rarefy30k.df<-as.data.frame(rarefy30k)
+rarefy30k.df <- cbind(rownames(rarefy30k.df), data.frame(rarefy30k.df, row.names=NULL))
+names(rarefy30k.df)[names(rarefy30k.df) == "rownames(rarefy30k.df)"] <- "ASV_name"
+rarefy30k_long <- rarefy30k.df %>% pivot_longer(-ASV_name, names_to = "SampleID", values_to = "Abundance_Vegan_Rarefied")
+rarefy30k_long <- rarefy30k_long %>% rename(SampleID. = ASV_name)
+rarefy30k_long <- rarefy30k_long %>% rename(ASV_name = SampleID)
+rarefy30k_long <- rarefy30k_long %>% rename(SampleID = SampleID.)
+asv_rarefy30k_long <- asv_cleaned_long %>% left_join(rarefy30k_long)
+Read_Count_rarefy30k <- asv_rarefy30k_long %>% group_by(SampleID) %>% summarise(Total = sum(Abundance_Vegan_Rarefied))
+asv_rarefy30k_long <- asv_rarefy30k_long %>% group_by(SampleID) %>% mutate(RA = (Abundance_Vegan_Rarefied/30000)*100)
+Read_Count_rarefy30k_RA <- asv_rarefy30k_long %>% group_by(SampleID) %>% summarise(Total = sum(RA))
+```
+
+```{r Rarefied30K NMDS Data preparation}
+library(tidyverse)
+library(vegan)
+library(dplyr)
+library(reshape2)
+Rarefied30K_subset <- asv_rarefy30k_long %>% dplyr::select(ASV_name, Abundance_Vegan_Rarefied, SampleID)
+Rarefied30K_subset <- Rarefied30K_subset %>% filter(!Abundance_Vegan_Rarefied ==0)
+Rarefied30K.asvs.wide.OFG <- reshape2::dcast(Rarefied30K_subset , SampleID~ASV_name, value.var = "Abundance_Vegan_Rarefied", fill=0)
+rownames(Rarefied30K.asvs.wide.OFG) <- Rarefied30K.asvs.wide.OFG$SampleID
+Rarefied30K_nmds_df <- Rarefied30K.asvs.wide.OFG [,-c(1)]
+```
+
+```{r 30KRarefied NMDS}
+Rarefied30K.nMDS <- metaMDS(Rarefied30K_nmds_df, distance = "bray", try =99, trymax=100, autotransform = F)
+#stressplot(Rarefied30K.nMDS)
+#plot(Rarefied30K.nMDS)
+names(Rarefied30K.nMDS)
+Rarefied30K.nMDS.points <- cbind(Rarefied30K.asvs.wide.OFG[,c(1)], as.data.frame(Rarefied30K.nMDS$points))
+colnames(Rarefied30K.nMDS.points)[1] <- "SampleID"
+Rarefied30K.nMDS.points <- Rarefied30K.nMDS.points %>% mutate(code=as.character(SampleID)) %>% left_join(sample_data)
+Rarefied30K.nMDS.points$Type <- as.character(Rarefied30K.nMDS.points$Type)
+```
+
+```{r 30KRarefied MDS}
+library(tidyverse)
+MDS.Rarefied30K <- ggplot(Rarefied30K.nMDS.points, aes(x=MDS1, y=MDS2, color = `Type`)) + 
+  geom_point(aes(size=0.4, alpha=0.5)) +
+  scale_colour_manual(values=c("Drain" = "#dc5658", "Nearshore"="#bed7a0", "5m"="#76cfe5" , "10m"="#e5bb99", "Lagoon"="#98ddc8")) +
+  NathanTheme
+MDS.Rarefied30K
+```
+
+```{r NMDS Data preparation}
+library(tidyverse)
+library(vegan)
+library(dplyr)
+library(reshape2)
+Abundance.subset <- css_df %>% dplyr::select(ASV_name, Abundance, SampleID)
+Abundance.subset <- Abundance.subset %>% filter(!Abundance ==0)
+sample_data <- sample_data %>% filter(!SampleID == ("T2062")) %>% filter(!SampleID == ("T2422"))
+abundance.asvs.wide.OFG <- reshape2::dcast(Abundance.subset, SampleID~ASV_name, value.var = "Abundance", fill=0)
+rownames(abundance.asvs.wide.OFG ) <- abundance.asvs.wide.OFG $SampleID
+abundance_nmds_df <- abundance.asvs.wide.OFG [,-c(1)]
+```
+
+```{r NMDS}
+Abundance.nMDS <- metaMDS(abundance_nmds_df, distance = "bray", try =99, trymax=100, autotransform = F)
+#stressplot(Abundance.nMDS)
+# plot(Abundance.nMDS)
+names(Abundance.nMDS)
+Abundance.nMDS.points<-cbind(asvs.wide.OFG[,c(1)], as.data.frame(Abundance.nMDS$points))
+colnames(Abundance.nMDS.points)[1] <- "SampleID"
+Abundance.nMDS.points<-Abundance.nMDS.points %>% mutate(code=as.character(SampleID)) %>% left_join(sample_data)
+Abundance.nMDS.points$Type <- as.character(Abundance.nMDS.points$Type)
+```
+
+```{r MDS}
+library(tidyverse)
+MDS.Abundance <- ggplot(Abundance.nMDS.points, aes(x=MDS1, y=MDS2, color = `Type`)) + 
+ geom_point(aes(size=0.4, alpha=0.5)) +
+  scale_colour_manual(values=c("Drain" = "#dc5658", "Nearshore"="#bed7a0", "5m"="#76cfe5" , "10m"="#e5bb99", "Lagoon"="#98ddc8")) +
+  NathanTheme
+MDS.Abundance
+```
+
+```{r MDS comparison}
+MDS.Abundance
+MDS.CSS
+```
+
+```{r Export Final Choice}
+asv_rarefy30k_long <- asv_rarefy30k_long %>% select(SampleID,ASV_name,ASV,Kingdom,Phylum,Class,Order,Family,Genus,Species,FGID,Abundance_Vegan_Rarefied,RA)
+asv_rarefy30k_long <- asv_rarefy30k_long %>% left_join(sample_data)
+
+setwd("~/Dropbox/UTS/PhD/Projects/Chapter3_Terrigal/Data/16S/Data")
+write_csv(asv_rarefy30k_long,'asv_rarefy30k_long.csv')
+```
+
+
+```{r filter list}
+filter_list <- asv_rarefy30k_long %>% filter(Type %in% ('NA')) %>% distinct(SampleID)
+````
