@@ -1,0 +1,180 @@
+---
+title: "This code is for the analysis of 16S Sequencing Data from a Wet Weather Runoff Experiment in Terrigal 2019"
+author: "Nathan Williams"
+date: "22/10/2020"
+output: html_document
+#I run this all on the HPC with data sets because my poor laptop is a bit slow..
+---
+```{bash filter samples}
+qsub -I -q c3b -l ncpus=11,mem=100GB,walltime=8:00:00
+cd /shared/c3/projects/Nathan.Williams.12034652/Terrigal/fastq_and_analysis
+cat TW.Long2020aug09.csv | cut -f 2,3,4 -d,  | grep -v ',0$' | sort | uniq > TW.Long2020aug09filt.csv
+
+module load devel/R-current;
+R
+```
+
+```{r Setup}
+#Load dependencies
+library("gridExtra")
+library("vegan")
+library("metacoder")
+library("taxa")
+library("phyloseq")
+library("ggplot2")
+library("dplyr")
+library("readr")
+library("stringr")
+library("agricolae")
+library("ape")
+library("tidyverse")
+library("tidyr")
+library("ggpubr")
+library("metagMisc")
+library("microbiome")
+```
+
+```{r Load and prepare files}
+#1.1 load in the data
+asv_data <- read_csv("TW.Long2020aug09filt.csv")
+
+#1.2 "select" your columns and then "spread" the data 
+asv_data <- asv_data %>% select(ASV,code,abund_chim4)
+asv_data <- asv_data %>% rename(SampleID = code)
+asv_data <- asv_data %>% rename(Abundance = abund_chim4)
+asv_data <- asv_data %>% spread(key='SampleID', value='Abundance', fill=0)
+names(asv_data) = gsub(pattern = "p1;", replacement = "", x = names(asv_data))
+ 
+
+#1.3 Load in the taxa data
+tax_data <- read_csv("tax_1_Long.silva138.csv")
+
+#1.5 Load in your metadata
+sample_data <- read_csv('SMD.csv')
+```
+
+```{r Clean the data steps 3.1}
+#3.1 Set your threshold and remove your bootstrap of 20 and replace it with 49, this is the first step towards cleaning your data.
+mythreshold <- 49
+tax_data$tax.Kingdom <- ifelse(tax_data$boot.Kingdom <= mythreshold, NA,tax_data$tax.Kingdom)
+tax_data$tax.Phylum <- ifelse(tax_data$boot.Phylum <= mythreshold, NA, tax_data$tax.Phylum)
+tax_data$tax.Class <- ifelse(tax_data$boot.Class <= mythreshold, NA, tax_data$tax.Class)
+tax_data$tax.Order <- ifelse(tax_data$boot.Order <= mythreshold, NA, tax_data$tax.Order)
+tax_data$tax.Family <- ifelse(tax_data$boot.Family <= mythreshold, NA, tax_data$tax.Family)
+tax_data$tax.Genus <- ifelse(tax_data$boot.Genus <= mythreshold, NA, tax_data$tax.Genus)
+tax_data$tax.Kingdom <- forcats::fct_explicit_na(tax_data$tax.Kingdom, 'k_unassigned')
+tax_data$tax.Phylum <- forcats::fct_explicit_na(tax_data$tax.Phylum, 'p_unassigned')
+tax_data$tax.Class <- forcats::fct_explicit_na(tax_data$tax.Class, 'c_unassigned')
+tax_data$tax.Order <- forcats::fct_explicit_na(tax_data$tax.Order, 'o_unassigned')
+tax_data$tax.Family <- forcats::fct_explicit_na(tax_data$tax.Family, 'f_unassigned')
+tax_data$tax.Genus <- forcats::fct_explicit_na(tax_data$tax.Genus, 'g_unassigned')
+tax_data$tax.Species <- forcats::fct_explicit_na(tax_data$tax.Species, 'sp.')
+```
+
+```{r Clean the data 3.2}
+#3.2 Select the columns you want and ditch the rest
+tax_data <- tax_data %>% select(ASV,tax.Kingdom,tax.Phylum,tax.Order,tax.Family,tax.Class,tax.Genus,tax.Species)
+
+#3.2.1 Rename columns (I do this to be neat but you don't have to)
+tax_data <- tax_data %>% rename(Kingdom = tax.Kingdom)
+tax_data <- tax_data %>% rename(Phylum = tax.Phylum)
+tax_data <- tax_data %>% rename(Class = tax.Class)
+tax_data <- tax_data %>% rename(Order = tax.Order)
+tax_data <- tax_data %>% rename(Family = tax.Family)
+tax_data <- tax_data %>% rename(Genus = tax.Genus)
+tax_data <- tax_data %>% rename(Species = tax.Species)
+```
+
+```{r}
+asv_cleaned_long <- asv_cleaned_long %>% rename(Genus = tax.Genus)
+asv_cleaned_long <- asv_cleaned_long %>% rename(Species = tax.Species)
+```
+
+```{r Clean the data 3.3}
+#3.4 Left join taxonomy data and ASV data to keep things simple
+tax_data$ASV <- as.character(tax_data$ASV)
+asv_data$ASV <- as.character(asv_data$ASV)
+asv_data <- tax_data %>%left_join(asv_data, 'ASV')
+```
+
+```{r Clean the data 3.4}
+#3.4 Make a long version of your data
+asv_data_long <- gather(data = asv_data, key = SampleID, value = Abundance,-c(1,2,3,4,5,6,7,8))
+```
+
+```{r Clean the data 3.5}
+#3.5 Remove unwanted ASVs - we will then store them in "Discarded_ASVs" in the case you want them later on.For this step we are going to rename our asv_data_long to Remove_1, Remove_2 and so on.. We will then label the final long ASV table as asv_cleaned_long.
+table(asv_data_long$Kingdom)
+
+#3.5.1 Remove Archaea... 29602 ASVs total in the dataset (present >1 time ever)
+Remove_1 <- asv_data_long %>% filter(!Kingdom %in% c('Archaea'))
+Archaea <- asv_data_long %>% filter(Kingdom %in% c('Archaea'))
+
+#3.5.2 Remove Eukaryota
+Remove_2 <- Remove_1 %>% filter(!Kingdom %in% c('Eukaryota'))
+Eukaryota <- Remove_1 %>% filter(Kingdom %in% c('Eukaryota'))
+
+#3.5.3 Remove Unassigned ASVs 
+Remove_3 <- Remove_2 %>% filter(!Kingdom %in% c('k_unassigned'))
+Unassigned_ASVs <- Remove_2 %>% filter(Kingdom %in% c('k_unassigned'))
+
+#3.5.4 Remove Chloroplast
+Remove_4 <- Remove_3 %>% filter(!Order %in% c('Chloroplast'))
+Chloroplast <- Remove_3 %>% filter(Order %in% c('Chloroplast'))
+
+#3.5.5 Remove Mitochondria - this is the last step of removals so rather than labeling "Remove_5" we are going for asv_clean_long
+asv_cleaned_long <- Remove_4 %>% filter(!Family %in% c('Mitochondria'))
+Mitochondria <- Remove_4 %>% filter(Order %in% c("Mitochondria"))
+
+#3.5 Left join your sample_data
+asv_cleaned_long <- asv_cleaned_long %>% left_join(sample_data)
+
+#3.5.6 Make a table to check everything has been removed
+table(asv_cleaned_long$Kingdom)
+
+#3.5.7 Make a dataframe for your stored Discarded ASVS "Discared_ASVs"
+Discarded_ASVS<-rbind(Archaea,Eukaryota,Chloroplast)
+```
+
+```{R Clean the data 3.4}
+#3.9 Quality filtration - there's a nature paper on this - basically you are removing anything that has a relative abundance of below 0.05%
+asv_cleaned_long <- asv_cleaned_long %>%  arrange(desc(asv_cleaned_long$Abundance))
+
+#3.9.1 Make your No_Filter table
+No_Filter <- asv_cleaned_long  %>% filter(Abundance > 0)
+
+#3.9.2 Calculate sample total column and left join back to No_Filter, this will now be called No_Filter_Total
+Sample_Total <- No_Filter  %>% group_by(SampleID) %>% summarise(Total=sum(Abundance))
+No_Filter_Total <- No_Filter %>% left_join(Sample_Total, c("SampleID"="SampleID"))
+
+#3.9.3 We will then calculate the relative abundance and remove the bottom 0.05%. Once this is done we will reliable it asv_cleaned_long as we are done
+No_Filter_Total$PercT <- ((No_Filter_Total$Abundance)/No_Filter_Total$Total)*100 #this makes it into a %
+No_Filter_Total <- No_Filter_Total %>%  arrange(desc(No_Filter_Total$PercT))
+asv_cleaned_long <- No_Filter_Total  %>% filter(PercT > 0.005)
+```
+
+```{r Clean the data}
+#3.9.4 Store your filtered out ASVs incase you want to peak at them later on
+Filtered_ASVs_0.05 <- No_Filter_Total  %>% filter(PercT < 0.005)
+
+#3.9.5 Select the columns we want or aka delete those columns we created before. We cannot use that old relative abundance column, we must calculate a new RA based off of our now cleaned data set.
+asv_cleaned_long <- asv_cleaned_long %>% select(ASV,Kingdom,Phylum,Order,Family,Class,Genus,Species,SampleID,Abundance,Location,Day,Transect,Total)
+
+#3.9.6 Now we will name the ASVs
+asv_cleaned_long_name <- asv_cleaned_long %>% filter(!Abundance %in% c("0"))
+asv_cleaned_long <- asv_cleaned_long_name %>%  arrange(desc(asv_cleaned_long_name$Abundance))
+asv_cleaned_by_asv <- asv_cleaned_long %>%group_by(ASV)
+ASV_list <- asv_cleaned_by_asv %>% dplyr::select (ASV)
+ASV_list <-distinct(ASV_list)
+ASV_list$numbers<-seq(1000000001,1000000000+nrow(ASV_list),1)
+ASV_list$prefix<-rep('B',nrow(ASV_list))
+ASV_list <- ASV_list %>% unite(ASV_name, c('prefix','numbers'), sep='', remove=T)
+asv_cleaned_long <- asv_cleaned_long %>% left_join(ASV_list , c("ASV"="ASV"))
+asv_cleaned_long <- asv_cleaned_long %>% unite('FG', c(Family, Genus), remove=F, sep=';')
+asv_cleaned_long <- asv_cleaned_long %>% unite('FGSp', c(FG, Species), remove=F, sep=';')
+asv_cleaned_long <- asv_cleaned_long %>% unite('FGID', c(FGSp, ASV_name), remove=F, sep=';')
+asv_cleaned_long <- asv_cleaned_long %>% unite('GSID', c(Genus, Species, ASV_name), remove=F, sep=';')
+asv_cleaned_long <- asv_cleaned_long %>% unite('FGID.Location', c(FGID, Location), remove=F, sep=';')
+asv_cleaned_long <- asv_cleaned_long %>% unite('taxonomy', c(Kingdom,Phylum,Class,Order,Family,Genus,Species), remove=F, sep=';')
+write_csv(asv_cleaned_long,'asv_cleaned_long.csv')
+```
